@@ -1,0 +1,6 @@
+.form-control:focus {
+    box-shadow: none !important;
+    outline: 0 !important;
+}
+
+::-webkit-scrollbar {display:none;}
