@@ -14,7 +14,7 @@ function App() {
 	}, [])
 
 	function getItemList() {
-		fetch("https://opensheet.elk.sh/1_hdFkBTCwqWiRa8Tkx2huEamIMqg5bRjTCOYV30xK1s/1")
+		fetch("https://opensheet.elk.sh/1_hdFkBTCwqWiRa8Tkx2huEamIMqg5bRjTCOYV30xK1s/items%20and%20prices")
 		.then(res => res.json())
 		.then(data => {
 			setSheetData(data);
@@ -29,7 +29,7 @@ function App() {
 	<Container fluid style={{backgroundColor: "#323131"}}>
 		<Row style={{height: "3vh", backgroundColor: "black"}}>
 			<Col style={{textAlign: "left", color: "white"}}>
-				<p>Garage Cash Drawer</p>
+				<p>Shed Cash Drawer</p>
 			</Col>
 			<Col style={{textAlign: "right", color: "white"}}>
 				<p>Mel's Lakeshore Resort</p>

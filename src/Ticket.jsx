@@ -87,18 +87,18 @@ function Ticket(props) {
                 <Row style={{borderBottomColor: "black", borderBottomStyle: "solid", height: "5vh"}}>
                     <h1 style={{fontSize: 25, textAlign: "center", marginTop: "1vh"}}>Ticket</h1>
                 </Row>
-                <Row style={{height: "70vh", overflowY: "scroll"}}> 
+                <Row style={{height: selectedItemIndex !== null ? "70vh" : "77.5vh", overflowY: "scroll"}}> 
                     <Col>
                     {
-                    ticketItems.map((item, index) => 
-                            <Row key={index} style={{marginTop: "2%"}}>
-                                <button onClick={() => setSelectedItemIndex(index)} style={{width: "100%", borderRadius: "10px", backgroundColor: selectedItemIndex === index ? "lightblue" : "white", border: "none"}}>
+                        ticketItems.map((item, index) => 
+                            <Row key={index}>
+                                <Button variant={selectedItemIndex === index ? "primary" : "outline-primary"} onClick={() => setSelectedItemIndex(index)} style={{width: "100%", borderRadius: "10px", border: "none", margin: 0, color: selectedItemIndex === index ? "white" : "black"}}>
                                     <Row>
                                     <Col xs="auto" sm="auto" md="auto" lg="auto" xl="auto" style={{marginLeft: "5%", padding: 0}}>
                                         <p style={{margin: 0, padding: 0, fontSize: 17}}>{item.name}</p>
                                     </Col>
                                     <Col>
-                                        <Card style={{border: "none", backgroundColor: "lightgrey", width: 'fit-content', textAlign: "center"}}>
+                                        <Card bg={selectedItemIndex === index ? "light" : "primary"} text={selectedItemIndex === index ? "dark" : "white"} style={{border: "none", width: 'fit-content', textAlign: "center"}}>
                                             <p style={{margin: "0px 10px 0px 10px", fontSize: 16}}>{item.qty}</p>
                                         </Card>
                                     </Col>
@@ -106,29 +106,27 @@ function Ticket(props) {
                                         <p style={{margin: 0, padding: 0, width: "auto", textAlign: "right", fontSize: 17}}>${(item.price * item.qty).toFixed(2)}</p>
                                     </Col>
                                     </Row>
-                                </button>
+                                </Button>
                             </Row>
                         )
                     }
                     </Col>
                 </Row>
-                <Row style={{height: "7.5vh"}} className="align-items-center">
-                    {selectedItemIndex !== null && (
-                        <>
-                        <Col md={8}>
-                            <Button variant="outline-warning" style={{width: "90%", fontSize: 20, marginLeft: "4%", paddingRight: "0px"}} onClick={() => { if (selectedItemIndex !== null) removeItem(selectedItemIndex); }}>Remove Item</Button>
+                {selectedItemIndex !== null && (
+                    <Row style={{height: "7.5vh"}} className="align-items-center">
+                        <Col style={{padding: 0}}>
+                            <Button variant="outline-warning" style={{width: "60%", fontSize: 20, marginLeft: "2.5%", marginRight: "2.5%"}} onClick={() => { if (selectedItemIndex !== null) removeItem(selectedItemIndex); }}>Remove Item</Button>
+                            <Button size="sm" variant="outline-primary" onClick={() => adjustQty(selectedItemIndex, -1)} style={{marginRight: "2.5%", fontSize: 20, width: "15%"}}>-</Button>
+                            <Button size="sm" variant="outline-primary" onClick={() => adjustQty(selectedItemIndex, 1)} style={{fontSize: 20, width: "15%"}}>+</Button>
                         </Col>
-                        <Col md={4}>
-                            <Button size="sm" variant="outline-secondary" onClick={() => adjustQty(selectedItemIndex, -1)} style={{marginRight: "10px", fontSize: 20, width: "40%"}}>-</Button>
-                            <Button size="sm" variant="outline-secondary" onClick={() => adjustQty(selectedItemIndex, 1)} style={{fontSize: 20, width: "40%"}}>+</Button>
-                        </Col>
-                        </>
-                    )}
-                </Row>
+                    </Row>
+                )}
                 <Row style={{height: "7.5vh", textAlign: "center"}} className="align-items-center">
-                    <Col>
-                        <Button variant="outline-danger" style={{width: "95%", fontSize: 20}} onClick={() => {setTicketItems([]); setTicketTotal(0); setSelectedItemIndex(null);}}>Clear Ticket</Button>
-                    </Col>
+                    {ticketTotal > 0 && (
+                        <Col style={{padding: 0}}>
+                            <Button variant="outline-danger" style={{width: "95%", fontSize: 20}} show={false} onClick={() => {setTicketItems([]); setTicketTotal(0); setSelectedItemIndex(null);}}>Clear Ticket</Button>
+                        </Col>
+                    )}
                 </Row>
             </Col>
             <Col lg={2}>
@@ -149,6 +147,19 @@ function Ticket(props) {
                         </ToggleButton>  
                     )
                 }
+                <ToggleButton
+                    key={"Open"}
+                    id={`radio-Open`}
+                    type="radio"
+                    variant={radioValue === "Open" ? 'primary' : 'light'}
+                    name="radio"
+                    value={"Open"}
+                    checked={radioValue === "Open"}
+                    onChange={(e) => {setRadioValue("Open")}}
+                    style={{fontSize: 20, margin: "5%", width: "90%"}}
+                >
+                    Open
+                </ToggleButton>  
             </Col>
             <Col lg={7} style={{height: "90vh", overflow: "auto"}}>
                 <Row style={{paddingTop: "1vh", paddingRight: "1vh"}}>
@@ -176,7 +187,7 @@ function Ticket(props) {
 				<p style={{margin: 0}}>Total: ${ticketTotal.toFixed(2)}</p>
 			</Col>
 			<Col style={{textAlign: "right", color: "white"}}>
-				<Button variant="light" style={{width: "200px", height: "5vh", marginTop: "1vh"}} onClick={() => setShowCashPad(true)}>Pay</Button>
+				<Button variant="light" style={{width: "200px", height: "5vh", marginTop: "1vh", fontSize: 24, paddingTop: "0px"}} onClick={() => setShowCashPad(true)}>Pay</Button>
 			</Col>
         </Row>
         <Modal show={showCashPad && !paymentEntered} onHide={() => setShowCashPad(false)} centered>

@@ -47,10 +47,10 @@ function CashPinPad(props) {
 	};
 
 	return (
-	<Container>
+	<Container fluid>
 		<Row>
-			<Col md={3}></Col>
-			<Col md={6}>
+			<Col md={2}></Col>
+			<Col md={8}>
 				<Card style={{backgroundColor: "transparent", border: "none"}}>
 				<Card.Body style={{padding: 0}}>
 					<Row>
@@ -79,7 +79,7 @@ function CashPinPad(props) {
 				</Card.Body>
 				</Card>
 			</Col>
-			<Col md={3}></Col>
+			<Col md={2}></Col>
 		</Row>
 	</Container>
 	);
