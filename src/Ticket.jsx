@@ -183,11 +183,11 @@ function Ticket(props) {
             </Col>
         </Row>
         <Row style={{backgroundColor: "black", height: "7vh"}}>
-            <Col style={{textAlign: "left", color: "white", fontSize: 35}}>
+            <Col style={{textAlign: "left", color: "white", fontSize: 45}}>
 				<p style={{margin: 0}}>Total: ${ticketTotal.toFixed(2)}</p>
 			</Col>
 			<Col style={{textAlign: "right", color: "white"}}>
-				<Button variant="light" style={{width: "200px", height: "5vh", marginTop: "1vh", fontSize: 24, paddingTop: "0px"}} onClick={() => setShowCashPad(true)}>Pay</Button>
+				<Button variant="light" style={{width: "200px", height: "5vh", marginTop: "1vh", fontSize: 30, paddingTop: "0px"}} onClick={() => setShowCashPad(true)}>Pay</Button>
 			</Col>
         </Row>
         <Modal show={showCashPad && !paymentEntered} onHide={() => setShowCashPad(false)} centered>
