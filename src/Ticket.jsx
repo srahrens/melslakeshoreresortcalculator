@@ -124,7 +124,7 @@ function Ticket(props) {
                 <Row style={{height: "7.5vh", textAlign: "center"}} className="align-items-center">
                     {ticketTotal > 0 && (
                         <Col style={{padding: 0}}>
-                            <Button variant="outline-danger" style={{width: "95%", fontSize: 20}} show={false} onClick={() => {setTicketItems([]); setTicketTotal(0); setSelectedItemIndex(null);}}>Clear Ticket</Button>
+                            <Button variant="outline-danger" style={{width: "95%", fontSize: 20}} onClick={() => {setTicketItems([]); setTicketTotal(0); setSelectedItemIndex(null);}}>Clear Ticket</Button>
                         </Col>
                     )}
                 </Row>
