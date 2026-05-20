@@ -4,7 +4,7 @@ import { Button, Container, Row, Col, Card, Form } from 'react-bootstrap';
 function LoginPinPad(login) {
 	const [pin, setPin] = useState('');
 	const maxLength = 4;
-	const correctPin = "1111";
+	const correctPin = "2916";
 
 	const addDigit = (digit) => {
 		if (pin.length < maxLength) {
