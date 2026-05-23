@@ -12,7 +12,7 @@ function Ticket(props) {
     const [showCashPad, setShowCashPad] = useState(false);
     const [paymentEntered, setPaymentEntered] = useState(false);
     const [cashGiven, setCashGiven] = useState(0);
-    
+
     function addItem(name, price) {
         let priceNum = parseFloat(price.slice(1));
         if (name === 'Open Liquor') {
@@ -178,6 +178,71 @@ function Ticket(props) {
                         )
                         :
                         <CashPinPad addItem={addItem}/>
+                    }
+                </Row>
+                <Row>
+                    {
+                        radioValue == 'Liquor' ?
+                            <>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Double", '$2.00')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "grey"}}>
+                                <Card style={{border: "none", backgroundColor: "grey"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Double</Card.Title>
+                                    <p style={{margin: 0}}>{'$2.00'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Can of Pop", '$0.50')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "lightgray"}}>
+                                <Card style={{border: "none", backgroundColor: "lightgray"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Can of Pop</Card.Title>
+                                    <p style={{margin: 0}}>{'$0.50'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Energy Drink", '$1.25')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "lightgray"}}>
+                                <Card style={{border: "none", backgroundColor: "lightgray"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Energy Drink</Card.Title>
+                                    <p style={{margin: 0}}>{'$1.25'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Tonic", '$0.50')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "lightgray"}}>
+                                <Card style={{border: "none", backgroundColor: "lightgray"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Tonic</Card.Title>
+                                    <p style={{margin: 0}}>{'$0.50'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Juice", '$0.50')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "lightgray"}}>
+                                <Card style={{border: "none", backgroundColor: "lightgray"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Juice</Card.Title>
+                                    <p style={{margin: 0}}>{'$0.50'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Slushie 12oz", '$4.25')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "lightgray"}}>
+                                <Card style={{border: "none", backgroundColor: "lightgray"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Slushie 12oz</Card.Title>
+                                    <p style={{margin: 0}}>{'$4.25'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            <Col lg={4} xl={4} xxl={4} style={{padding: "1vh"}}>
+                                <button onClick={() => addItem("Modifier: Slushie 16oz", '$5.00')} style={{width: "100%", borderRadius: "10px", textAlign: "left", backgroundColor: "lightgray"}}>
+                                <Card style={{border: "none", backgroundColor: "lightgray"}}>
+                                    <Card.Title style={{fontSize: 20}}>Modifier: Slushie 16oz</Card.Title>
+                                    <p style={{margin: 0}}>{'$5.00'}</p>
+                                </Card>
+                                </button>
+                            </Col>
+                            </>
+                        :
+                            <></>
                     }
                 </Row>
             </Col>
