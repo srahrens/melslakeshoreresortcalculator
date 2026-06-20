@@ -73,7 +73,7 @@ function CashPinPad(props) {
                         <Col xs={4}><Button variant="outline-light" style={{width: "90%", aspectRatio: "1/1", fontSize: 30, marginRight: "5%", marginLeft: "5%"}} onClick={() => addDigit('.')}>.</Button></Col>
 					</Row>
                     <Row>
-                        <Button variant="outline-success" style={{marginTop: "5%", width: "95%", fontSize: 30, marginRight: "2.5%", marginLeft: "2.5%"}} onClick={() => { props.setCashGiven(amount); props.setPaymentEntered(true); }}>Calculate Change</Button>
+                        <Button variant="outline-success" style={{marginTop: "5%", width: "95%", fontSize: 30, marginRight: "2.5%", marginLeft: "2.5%"}} onClick={() => { props.setCashGiven(amount); props.setPaymentEntered(true); props.sendTicketItems(); }}>Calculate Change</Button>
                     </Row>
 				</Card.Body>
 				</Card>

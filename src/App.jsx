@@ -5,12 +5,13 @@ import LoginPinPad from './LoginPinPad.jsx';
 import Ticket from './Ticket.jsx';
 
 function App() {
-	const [login, setLogin] = useState(false);
 	const [sheetData, setSheetData] = useState([]); // All data from google sheet
 	const [departments, setDepartments] = useState([]); // All departments listed in sheet
+	const [modifiers, setModifiers] = useState([]); // All modifiers from google sheet
 
 	useEffect(() => {
 		getItemList();
+		getModifersList();
 	}, [])
 
 	function getItemList() {
@@ -26,13 +27,11 @@ function App() {
 		})
 	}
 
-	// Finish this function to get modifiers list from google sheet and set it to state
 	function getModifersList() {
 		fetch("https://opensheet.elk.sh/1_hdFkBTCwqWiRa8Tkx2huEamIMqg5bRjTCOYV30xK1s/modifiers")
 		.then(res => res.json())
 		.then(data => {
-			console.log(data);
-
+			setModifiers(data);
 		})
 	}
 
@@ -107,11 +106,7 @@ function App() {
 			</Col>
 		</Row>
 		<Row style={{height: "97vh"}}>
-			{login == false ?
-				<LoginPinPad login={login} setLogin={setLogin}/>
-				:
-				<Ticket sheetData={sheetData} departments={departments}/>
-			}
+			<Ticket sheetData={sheetData} departments={departments} modifiers={modifiers}/>
 		</Row>
 	</Container>
 	)
