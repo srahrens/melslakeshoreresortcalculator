@@ -1,9 +1,72 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {Card, Container, Button, Row, Col, ToggleButton, Modal} from 'react-bootstrap';
 import './App.css'
 import CashPinPad from './CashPinPad.jsx';
 import PaymentPinPad from './PaymentPinPad.jsx';
 
+const GAS_URL = "https://script.google.com/macros/s/AKfycbyfYo-rxtVEBPbnmKf1AWYBghlzZ8WkFgbzrj8Zc82wNQT1PuRyzeWQjPsu2YN2q4BP1Q/exec";
+const QUEUE_KEY = "melsPOS_pendingTickets";
+
+// Tickets that failed to reach the sheet are queued here and retried automatically
+// (on load, when the connection comes back, and on a timer) so a dropped connection
+// in the shed doesn't silently lose a sale that was already rung up in cash.
+
+/**
+ * Reads the queue of tickets that failed to sync, from `localStorage`.
+ *
+ * @returns {Array<Object>} The queued ticket payloads (empty array if none, or if the stored value is corrupt).
+ */
+function loadQueue() {
+    try {
+        return JSON.parse(localStorage.getItem(QUEUE_KEY)) || [];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Persists the queue of tickets that failed to sync, to `localStorage`.
+ *
+ * @param {Array<Object>} queue - The ticket payloads to store.
+ * @returns {void}
+ */
+function saveQueue(queue) {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+}
+
+/**
+ * Sends a single ticket payload to the Google Apps Script endpoint.
+ *
+ * @param {Object} payload - The ticket to send (id, items, total, timestamp).
+ * @returns {Promise<boolean>} `true` if the request completed with an ok HTTP status, `false` on network failure or a non-ok response.
+ */
+async function postTicket(payload) {
+    try {
+        const res = await fetch(GAS_URL, {
+            method: "POST",
+            mode: 'cors', // Required for cross-origin requests
+            headers: {
+                "Content-Type": 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify(payload)
+        });
+        return res.ok;
+    } catch (err) {
+        console.error("Ticket sync failed, will retry:", err);
+        return false;
+    }
+}
+
+/**
+ * The main POS screen: builds a ticket from department items and modifiers, totals it,
+ * and takes a cash payment.
+ *
+ * @param {Object} props
+ * @param {Array<Object>} props.sheetData - Item/price rows loaded from the Google Sheet (each row has at least `Name`, `Price`, `Department`, `buttonColor`).
+ * @param {Array<string>} props.departments - Unique department names derived from `sheetData`, used to render the department selector buttons.
+ * @param {Array<Object>} props.modifiers - Modifier rows loaded from the Google Sheet (each row has at least `Modifier_Name`, `Price`, `Department`, `buttonColor`).
+ * @returns {JSX.Element} The ticket, department selector, item grid, and payment modals.
+ */
 function Ticket(props) {
     const [radioValue, setRadioValue] = useState('Beer'); // for department selection
     const [modifierScreen, setModifierScreen] = useState(null); // for modifier selection screen
@@ -14,9 +77,49 @@ function Ticket(props) {
     const [showCashPad, setShowCashPad] = useState(false);
     const [paymentEntered, setPaymentEntered] = useState(false);
     const [cashGiven, setCashGiven] = useState(0);
+    const [pendingSyncCount, setPendingSyncCount] = useState(() => loadQueue().length);
+    const isSendingRef = useRef(false);
+
+    /**
+     * Tries to (re)send every ticket in the failed-sync queue. Whichever tickets still
+     * fail are kept in the queue for the next attempt; `pendingSyncCount` is updated to match.
+     *
+     * @returns {Promise<void>}
+     */
+    async function flushQueue() {
+        let queue = loadQueue();
+        if (queue.length === 0) return;
+
+        const stillPending = [];
+        for (const payload of queue) {
+            const success = await postTicket(payload);
+            if (!success) stillPending.push(payload);
+        }
+        saveQueue(stillPending);
+        setPendingSyncCount(stillPending.length);
+    }
+
+    useEffect(() => {
+        flushQueue();
+        window.addEventListener('online', flushQueue);
+        const interval = setInterval(flushQueue, 30000);
+        return () => {
+            window.removeEventListener('online', flushQueue);
+            clearInterval(interval);
+        };
+    }, []);
 
 
     // TODO: Refactor this to add modifiers under each item instead of as separate items on the ticket.
+    /**
+     * Adds an item to the ticket, or increments its quantity if it's already on the
+     * ticket. "Open Liquor" (manually-priced) entries are always added as a new line
+     * rather than merged, since each one can have a different price.
+     *
+     * @param {string} name - The item's display name (matched against existing ticket lines).
+     * @param {string} price - The item's price as a currency string, e.g. `"$4.00"`.
+     * @returns {void}
+     */
     function addItem(name, price) {
         let priceNum = parseFloat(price.slice(1));
         if (name === 'Open Liquor') {
@@ -40,6 +143,14 @@ function Ticket(props) {
         setTicketTotal(prevTotal => prevTotal + priceNum);
     }
 
+    /**
+     * Adds a modifier (e.g. a liquor/mixer add-on) to the ticket, or increments its
+     * quantity if it's already on the ticket.
+     *
+     * @param {string} name - The modifier's display name (matched against existing ticket lines).
+     * @param {string} price - The modifier's price as a currency string, e.g. `"$0.50"`.
+     * @returns {void}
+     */
     function addModifier(name, price) {
         let priceNum = parseFloat(price.slice(1));
         setTicketItems(prevItems => {
@@ -57,6 +168,13 @@ function Ticket(props) {
         setTicketTotal(prevTotal => prevTotal + priceNum);
     }
 
+    /**
+     * Removes a ticket line entirely (regardless of quantity) and subtracts its full
+     * line total from the ticket total.
+     *
+     * @param {number} index - Index into `ticketItems` of the line to remove.
+     * @returns {void}
+     */
     function removeItem(index) {
         const item = ticketItems[index];
         const amount = item.price * item.qty;
@@ -65,6 +183,14 @@ function Ticket(props) {
         setSelectedItemIndex(null);
     }
 
+    /**
+     * Adjusts a ticket line's quantity by `delta` and updates the ticket total to match.
+     * If the resulting quantity would be zero or less, the line is removed instead.
+     *
+     * @param {number} index - Index into `ticketItems` of the line to adjust.
+     * @param {number} delta - Amount to add to the current quantity (negative to decrease).
+     * @returns {void}
+     */
     function adjustQty(index, delta) {
         setTicketItems(prev => {
             const item = prev[index];
@@ -82,19 +208,40 @@ function Ticket(props) {
         setTicketTotal(prevTotal => prevTotal + (item.price * delta));
     }
 
-    function sendTicketItems() {
-        fetch("https://script.google.com/macros/s/AKfycbyfYo-rxtVEBPbnmKf1AWYBghlzZ8WkFgbzrj8Zc82wNQT1PuRyzeWQjPsu2YN2q4BP1Q/exec", {
-            method: "POST",
-            mode: 'cors', // Required for cross-origin requests
-            headers: {
-                "Content-Type": 'text/plain;charset=utf-8' 
-            },
-            body: JSON.stringify({
-                items: ticketItems
-            })
-        })
+    /**
+     * Sends the current ticket to the Google Apps Script endpoint. On failure, queues
+     * the ticket in `localStorage` (via {@link saveQueue}) so {@link flushQueue} can
+     * retry it later instead of the sale being lost.
+     *
+     * @returns {Promise<void>}
+     */
+    async function sendTicketItems() {
+        if (isSendingRef.current) return; // guard against double-tap firing this twice for one ticket
+        isSendingRef.current = true;
+
+        // Creates a unique id for each sale and adds it and sale details to queue if there is an error in sending the ticket
+        const payload = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            items: ticketItems,
+            total: ticketTotal,
+            timestamp: new Date().toISOString()
+        };
+
+        const success = await postTicket(payload);
+        if (!success) {
+            const queue = loadQueue();
+            queue.push(payload);
+            saveQueue(queue);
+            setPendingSyncCount(queue.length);
+        }
     }
 
+    /**
+     * Clears the ticket and closes the payment modals after a sale is completed (or
+     * abandoned), returning the screen to a blank ticket.
+     *
+     * @returns {void}
+     */
     function resetTicket() {
         console.log(ticketItems)
         setTicketItems([]);
@@ -102,8 +249,18 @@ function Ticket(props) {
         setSelectedItemIndex(null);
         setShowCashPad(false);
         setPaymentEntered(false);
+        isSendingRef.current = false;
     }
 
+    /**
+     * Reorders a flat item list into row-major order for a multi-column grid, so that
+     * mapping the result left-to-right/top-to-bottom fills columns evenly (rather than
+     * filling one column at a time).
+     *
+     * @param {Array<Object>} items - Items to distribute across columns.
+     * @param {number} [columns=3] - Number of columns to lay the items out into.
+     * @returns {Array<Object>} `items` reordered so that rendering it in sequence fills the grid row by row.
+     */
     function orderItemsForColumns(items, columns = 3) {
         const ordered = [];
         if (!items || items.length === 0) return ordered;
@@ -132,7 +289,6 @@ function Ticket(props) {
 
     const departmentItems = props.sheetData.filter(t => t.Department === radioValue);
     const orderedDepartmentItems = orderItemsForColumns(departmentItems, 3);
-    console.log(ticketItems);
 
     return (
     
@@ -302,7 +458,12 @@ function Ticket(props) {
             <Col style={{textAlign: "left", color: "white", fontSize: 45}}>
 				<p style={{margin: 0}}>Total: ${ticketTotal.toFixed(2)}</p>
 			</Col>
-			<Col style={{textAlign: "right", color: "white"}}>
+			<Col style={{textAlign: "right", color: "white"}} className="align-items-center">
+				{pendingSyncCount > 0 && (
+					<span style={{color: "#ffc107", fontSize: 16, marginRight: "1vw"}}>
+						⚠ {pendingSyncCount} unsynced
+					</span>
+				)}
 				<Button variant="light" style={{width: "200px", height: "5vh", marginTop: "1vh", fontSize: 30, paddingTop: "0px"}} onClick={() => setShowCashPad(true)}>Pay</Button>
 			</Col>
         </Row>
