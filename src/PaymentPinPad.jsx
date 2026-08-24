@@ -2,12 +2,33 @@ import React, { useState } from 'react';
 import { Button, Container, Row, Col, Card, Form } from 'react-bootstrap';
 import {CurrencyInput, formatValue} from 'react-currency-input-field';
 
+/**
+ * Numeric keypad for entering the cash amount a customer hands over. Despite the
+ * component name (a holdover from {@link ./CashPinPad.jsx}), this is the payment
+ * pad rendered in the "Pay" modal — on submit it reports the amount given, sends
+ * the ticket to the sheet, and flags payment as entered so the parent can show
+ * the change-due screen.
+ *
+ * @param {Object} props
+ * @param {(paymentEntered: boolean) => void} props.setPaymentEntered - Marks payment as entered so the parent shows the change-due modal.
+ * @param {boolean} props.paymentEntered - Whether payment has already been entered (unused here, passed through from the parent).
+ * @param {(amount: string) => void} props.setCashGiven - Records the cash amount entered, for change-due calculation.
+ * @param {() => Promise<void>} props.sendTicketItems - Callback (from {@link ../Ticket.jsx}) that submits the current ticket to the sheet.
+ * @returns {JSX.Element} The cash-amount display and numeric keypad.
+ */
 function CashPinPad(props) {
 	const [amount, setAmount] = useState('');
 	const maxLength = 6;
     const [decimalAdded, setDecimalAdded] = useState(false);
     const [decimalLength, setDecimalLength] = useState(2);
 
+	/**
+	 * Appends a digit (or decimal point) to the entered amount, respecting the
+	 * max length and limiting input to two digits after the decimal point.
+	 *
+	 * @param {number|string} digit - The digit (0-9) or `'.'` that was pressed.
+	 * @returns {void}
+	 */
 	const addDigit = (digit) => {
 		if (amount.length < maxLength) {
             if (digit === '.') {
@@ -22,6 +43,12 @@ function CashPinPad(props) {
 		}
 	};
 
+	/**
+	 * Removes the last character of the entered amount and rolls back the decimal
+	 * tracking state to match.
+	 *
+	 * @returns {void}
+	 */
 	const deleteDigit = () => {
 		setAmount(prev => prev.slice(0, -1));
         if (decimalAdded == true && decimalLength !=2) {
@@ -31,7 +58,11 @@ function CashPinPad(props) {
         }
 	};
 
-	// Generate buttons 1-9
+	/**
+	 * Builds the 1-9 digit buttons for the keypad.
+	 *
+	 * @returns {JSX.Element[]} One `<Col>` per digit 1-9.
+	 */
 	const renderButtons = () => {
 		return [1, 2, 3, 4, 5, 6, 7, 8, 9].map(digit => (
 			<Col xs={4} key={digit}>
