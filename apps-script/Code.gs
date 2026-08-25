@@ -1,10 +1,11 @@
 const sheets = SpreadsheetApp.openByUrl('https://docs.google.com/spreadsheets/d/1_hdFkBTCwqWiRa8Tkx2huEamIMqg5bRjTCOYV30xK1s/edit?gid=1604728652#gid=1604728652');
 const priceSheet = sheets.getSheetByName("Items and Prices");
-const recordSheet = sheets.getSheetByName("Records");
+const recordSheet = sheets.getSheetByName("Daily Log");
 const todaySheet = sheets.getSheetByName("Today's Summary");
+const ticketLogSheet = sheets.getSheetByName("Individual Ticket Log");
 const bandSheet = sheets.getSheetByName("Band Upcharge");
 
-const LAST_ROW = 300; // last row tracked in Today's Summary (matches the original G2:G300 / T2:T300 / O2:O300 ranges)
+const LAST_ROW = 300; // last row tracked in Today's Summary (matches the original G2:G300 / S2:S300 / O2:O300 ranges)
 
 /**
  * Checks the "Band Upcharge" sheet (columns: date, startTime, endTime, overnight) for
@@ -43,10 +44,8 @@ function isBandActive() {
 
 /**
  * Web app POST handler. Receives a ticket JSON payload from the POS front end and
- * applies it to the "Today's Summary" sheet: increments matching item counts (split
- * into normal-hours vs band-upcharge-hours columns based on whether the band upcharge
- * is active right now) and dollar sales, increments matching modifier counts, and
- * appends any "Open Liquor" entries to the open-sales log.
+ * applies it to the "Today's Summary" sheet: increments matching item/modifier
+ * running totals and appends any "Open Liquor" entries to the open-sales log.
  *
  * Runs under a script lock so concurrent tickets can't race each other, and is
  * idempotent on `data.id` so a client retry of an already-processed ticket is a no-op.
@@ -95,54 +94,62 @@ function doPost(e) {
     var unmatched = [];
 
     data.items.forEach(function (item) {
-      if (item.type === "modifier") {
-        var row = modifierNames.findIndex(function (n, i) {
-          return n[0] === item.name && modifierDepartments[i][0] === item.department;
-        });
-        if (row === -1) {
-          unmatched.push("modifier: " + item.name + " (" + item.department + ")");
-        } else {
-          modifierAmounts[row][0] = (modifierAmounts[row][0] || 0) + item.qty;
-        }
-      } else {
-        var row = names.findIndex(function (n) { return n[0] === item.name; });
-        if (row !== -1) {
-          if (bandActive) {
-            bandCounts[row][0] = (bandCounts[row][0] || 0) + item.qty;
-          } else {
-            normalCounts[row][0] = (normalCounts[row][0] || 0) + item.qty;
-          }
-          itemSales[row][0] = (itemSales[row][0] || 0) + item.qty * item.price;
-        } else if (item.name !== "Open Liquor") {
-          unmatched.push("item: " + item.name);
-        }
-      }
-
       if (item.name === "Open Liquor") {
         if (nextOpenSalesRow >= openAmounts.length) {
           unmatched.push("open sale (log full): $" + item.price);
         } else {
           var now = new Date();
           var timeZone = Session.getScriptTimeZone();
-          openTimes[nextOpenSalesRow][0] = Utilities.formatDate(now, timeZone, "hh:mm a");
-          openAmounts[nextOpenSalesRow][0] = item.price;
+          var openSalesRow = nextOpenSalesRow + 2; // convert the 0-based array index back to the actual sheet row (data starts at row 2)
+          todaySheet.getRange("O" + openSalesRow).setValue(Utilities.formatDate(now, timeZone, "hh:mm a"));
+          todaySheet.getRange("P" + openSalesRow).setValue(item.price);
           nextOpenSalesRow++;
         }
+      } else {
+        var itemRow = names.findIndex(function (n) { return n[0] === item.name; });
+        if (itemRow !== -1) {
+          if (bandActive) {
+            bandCounts[itemRow][0] = (bandCounts[itemRow][0] || 0) + item.qty;
+          } else {
+            normalCounts[itemRow][0] = (normalCounts[itemRow][0] || 0) + item.qty;
+          }
+          itemSales[itemRow][0] = (itemSales[itemRow][0] || 0) + item.qty * item.price;
+
+          // check if there are modifiers
+          if (item.mods.length > 0) {
+            item.mods.forEach(function (mod) {
+              var modRow = modifierNames.findIndex(function (n, i) {
+                return n[0] === mod.name && modifierDepartments[i][0] === item.department;
+              });
+              if (modRow === -1) {
+                unmatched.push("modifier: " + mod.name + " (" + item.department + ")");
+              } else {
+                modifierAmounts[modRow][0] = (modifierAmounts[modRow][0] || 0) +  1;
+              }
+            });
+          }
+        } else if (item.name !== "Open Liquor") {
+          unmatched.push("item: " + item.name);
+        }
+        todaySheet.getRange("I2:I" + LAST_ROW).setValues(normalCounts);
+        todaySheet.getRange("J2:J" + LAST_ROW).setValues(bandCounts);
+        todaySheet.getRange("K2:K" + LAST_ROW).setValues(itemSales);
+        todaySheet.getRange("V2:V" + LAST_ROW).setValues(modifierAmounts);
       }
     });
 
-    todaySheet.getRange("I2:I" + LAST_ROW).setValues(normalCounts);
-    todaySheet.getRange("J2:J" + LAST_ROW).setValues(bandCounts);
-    todaySheet.getRange("K2:K" + LAST_ROW).setValues(itemSales);
-    todaySheet.getRange("V2:V" + LAST_ROW).setValues(modifierAmounts);
-    todaySheet.getRange("O2:O" + LAST_ROW).setValues(openTimes);
-    todaySheet.getRange("P2:P" + LAST_ROW).setValues(openAmounts);
+    var now = new Date();
+    var timeZone = Session.getScriptTimeZone();
+    ticketLogSheet.insertRowBefore(2);
 
-    if (unmatched.length > 0) {
-      // These would previously fail SILENTLY - the sale's cash was taken but nothing in the
-      // sheet reflected it. Surface them instead of losing them quietly.
-      Logger.log("Ticket " + (data.id || "(no id)") + " had unmatched entries: " + unmatched.join(", "));
-    }
+    ticketLogSheet.getRange("C2:H2").setValues([[
+      Utilities.formatDate(now, timeZone, "MM/dd/yyyy"),
+      Utilities.formatDate(now, timeZone, "hh:mm a"),
+      data.id || "",
+      data.total,
+      data.items.length,
+      unmatched.join(", ")
+    ]]);
 
     return ContentService.createTextOutput(
       "OK: " + data.items.length + " item(s) recorded" +
@@ -165,17 +172,10 @@ function doPost(e) {
  * @returns {void}
  */
 function makeRecord() {
-  // Same lock as doPost: without this, a rollover trigger firing while a late sale is mid-write
-  // could clear the very columns doPost is about to update, or archive a half-written total.
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
   try {
-    // NOTE: .getValue() (singular) returns the plain cell value. The original code used
-    // .getValues() here, which returns a 2D array - so "sumItemSales + modifierSales" was
-    // doing STRING CONCATENATION of two arrays (e.g. "120" + "15" -> "12015"), not addition,
-    // and the date cell was being written back as a nested array instead of a real Date.
-    // That alone would make every archived daily total wrong, independent of any race condition.
     var sumItemSales = todaySheet.getRange("C2").getValue();
     var sumOpenSales = todaySheet.getRange("C6").getValue();
     var modifierSales = todaySheet.getRange("C10").getValue();
@@ -184,20 +184,13 @@ function makeRecord() {
     var totalSales = todaySheet.getRange("C15").getValue();
 
     if (totalSales != 0) {
-      var records = recordSheet.getRange("C2:C").getValues();
-      var nextOpenRecordsRow = -1;
-      for (var n = 0; n < records.length; n++) {
-        if (records[n][0] === '') {
-          nextOpenRecordsRow = n + 2; // +2 to convert 0-based index back to a sheet row (records starts at C2)
-          break;
-        }
-      }
-      if (nextOpenRecordsRow === -1) nextOpenRecordsRow = records.length + 2;
+      recordSheet.insertRowBefore(2);
 
-      recordSheet.getRange("C" + nextOpenRecordsRow).setValue(date);
-      recordSheet.getRange("D" + nextOpenRecordsRow).setValue(sumOpenSales);
-      recordSheet.getRange("E" + nextOpenRecordsRow).setValue(sumItemSales + modifierSales);
-      recordSheet.getRange("F" + nextOpenRecordsRow).setValue(totalSales);
+      recordSheet.getRange("C2").setValue(date);
+      recordSheet.getRange("D2").setValue(sumOpenSales);
+      recordSheet.getRange("E2").setValue(sumItemSales + modifierSales);
+      recordSheet.getRange("F2").setValue(totalSales);
+      recordSheet.getRange("H2").setFormula("=G2-F2");
 
       // Reset Amounts
       todaySheet.getRange("O2:O" + LAST_ROW).clearContent(); // Open Sales Time
