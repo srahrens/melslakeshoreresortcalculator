@@ -521,7 +521,7 @@ function Ticket(props) {
                         )}
                     </Row>
             : modifierScreen == null ?
-                <CashPinPad name={"Open Liqour"} addItem={addItem} setCurrentDepartment={setCurrentDepartment}/>
+                <CashPinPad name={"Open Liquor"} addItem={addItem} setCurrentDepartment={setCurrentDepartment}/>
             :
                 <></>
             }
