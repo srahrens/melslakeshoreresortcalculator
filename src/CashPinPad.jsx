@@ -8,6 +8,7 @@ import {CurrencyInput, formatValue} from 'react-currency-input-field';
  * "Open Liquor" line to the ticket with the entered price.
  *
  * @param {Object} props
+ * @param string name props.name - what the item will be label as on the ticket
  * @param {(name: string, price: string) => void} props.addItem - Callback (from {@link ../Ticket.jsx}) that adds the priced item to the ticket.
  * @param {(department: string) => void} props.setRadioValue - Unused here; passed through from the parent's department selector state.
  * @returns {JSX.Element} The price display and numeric keypad.
@@ -101,7 +102,7 @@ function CashPinPad(props) {
                         <Col xs={4}><Button variant="outline-light" style={{width: "90%", aspectRatio: "1/1", fontSize: 30, marginRight: "5%", marginLeft: "5%"}} onClick={() => addDigit('.')}>.</Button></Col>
 					</Row>
                     <Row>
-                        <Button variant="outline-success" style={{marginTop: "5%", width: "95%", fontSize: 30, marginRight: "2.5%", marginLeft: "2.5%"}} onClick={() => { if (parseFloat(amount) > 0) { props.addItem('Open Liquor', `$${amount}`); setAmount(''); } }}>Add Item</Button>
+                        <Button variant="outline-success" style={{marginTop: "5%", width: "95%", fontSize: 30, marginRight: "2.5%", marginLeft: "2.5%"}} onClick={() => { if (parseFloat(amount) > 0) { props.addItem(props.name, `$${amount}`); setAmount(''); } }}>Add Item</Button>
                     </Row>
 				</Card.Body>
 				</Card>
