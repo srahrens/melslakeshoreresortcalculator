@@ -1,30 +1,55 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {Card, Container, Button, Row, Col} from 'react-bootstrap';
 import './App.css';
 import LoginPinPad from './LoginPinPad.jsx';
 import Ticket from './Ticket.jsx';
 
+const BAND_CHECK_INTERVAL_MS = 60000; // how often to recheck whether a band event is active
+
 /**
  * Root component for the POS app. Loads the item/price list, department list, and
- * modifier list from the Google Sheet on mount, applies the band-upcharge price
- * adjustment, and renders the {@link Ticket} screen.
+ * modifier list from the Google Sheet on mount, periodically rechecks whether a band
+ * event is active to apply the upcharge, and renders the {@link Ticket} screen.
  *
  * @returns {JSX.Element} The app shell (header bar + ticket screen).
  */
 function App() {
-	const [sheetData, setSheetData] = useState([]); // All data from google sheet
+	const [rawItems, setRawItems] = useState([]); // Item/price data straight from the sheet, never mutated
 	const [departments, setDepartments] = useState([]); // All departments listed in sheet
 	const [modifiers, setModifiers] = useState([]); // All modifiers from google sheet
+	const [bandActive, setBandActive] = useState(false); // Whether a band upcharge event is active right now
 
 	useEffect(() => {
 		getItemList();
 		getModifersList();
+		checkBandUpcharge();
+		// The band schedule (or the clock) can change while the POS tab stays open all shift,
+		// so recheck periodically instead of only once on load - otherwise prices only update
+		// whenever someone happens to reload the page next.
+		const interval = setInterval(checkBandUpcharge, BAND_CHECK_INTERVAL_MS);
+		return () => clearInterval(interval);
 	}, [])
 
+	// The priced item list handed to Ticket: rawItems with the band upcharge applied on top
+	// if one is active. Always recomputed from the untouched rawItems, so toggling bandActive
+	// on and off repeatedly (e.g. every 60s while a band event is active) can't stack the
+	// $0.50 upcharge on top of itself.
+	const sheetData = useMemo(() => {
+		if (!bandActive) return rawItems;
+		const parsePriceValue = value => {
+			const cleaned = String(value).replace(/[^0-9.-]+/g, '');
+			return Number(cleaned) || 0;
+		};
+		return rawItems.map(item =>
+			item.Department === "Snacks & Pop"
+				? item
+				: { ...item, Price: `$${(parsePriceValue(item.Price) + 0.5).toFixed(2)}` }
+		);
+	}, [rawItems, bandActive]);
+
 	/**
-	 * Fetches the "items and prices" sheet, stores it in state, derives the unique
-	 * list of departments from it, and kicks off the band-upcharge check
-	 * ({@link isBandHere}) against the freshly loaded data.
+	 * Fetches the "items and prices" sheet, stores it in state, and derives the unique
+	 * list of departments from it.
 	 *
 	 * @returns {void}
 	 */
@@ -32,8 +57,7 @@ function App() {
 		fetch("https://opensheet.elk.sh/1_hdFkBTCwqWiRa8Tkx2huEamIMqg5bRjTCOYV30xK1s/items%20and%20prices")
 		.then(res => res.json())
 		.then(data => {
-			setSheetData(data);
-			isBandHere(data);
+			setRawItems(data);
 			let uniqueDepartments = data.filter((obj, index, self) =>
 			index === self.findIndex((t) => t.Department === obj.Department)
 			);
@@ -90,23 +114,18 @@ function App() {
 
 	/**
 	 * Checks the "band upcharge" sheet for a live band event covering the current
-	 * moment, and if one is active, adds $0.50 to every item's price except
-	 * "Snacks & Pop" before storing the result as `sheetData`.
+	 * moment and updates `bandActive` to match. Called on mount and then re-polled
+	 * every {@link BAND_CHECK_INTERVAL_MS} so a schedule change (or the clock crossing
+	 * a start/end time) gets picked up without needing the page to be reloaded.
 	 *
-	 * @param {Array<Object>} data - The item/price list to (conditionally) apply the upcharge to, as loaded by {@link getItemList}.
 	 * @returns {void}
 	 */
-	function isBandHere(data) {
-		const parsePriceValue = value => {
-			const cleaned = String(value).replace(/[^0-9.-]+/g, '');
-			return Number(cleaned) || 0;
-		};
-
+	function checkBandUpcharge() {
 		fetch("https://opensheet.elk.sh/1_hdFkBTCwqWiRa8Tkx2huEamIMqg5bRjTCOYV30xK1s/band%20upcharge")
 		.then(res => res.json())
 		.then(bandData => {
 			const now = new Date();
-			let updatedData = data;
+			let active = false;
 			bandData.forEach(entry => {
 				entry.date = new Date(entry.date);
 				entry.startTime = parse12HourTime(entry.date, entry.startTime);
@@ -114,25 +133,15 @@ function App() {
 				if (now.getFullYear() === entry.date.getFullYear() && now.getMonth() === entry.date.getMonth() && now.getDate() === entry.date.getDate()) {
 					const bandIsPresent = (now >= entry.startTime && now <= entry.endTime && entry.overnight === "FALSE")
 						|| ((now >= entry.startTime || now <= entry.endTime) && entry.overnight === "TRUE");
-					if (bandIsPresent) {
-						updatedData = updatedData.map(item => {
-							if (item.Department === "Snacks & Pop") {
-								return item;
-							}
-							return {
-								...item,
-								Price: `$${(parsePriceValue(item.Price) + 0.5).toFixed(2)}`
-							};
-						});
-					}
+					if (bandIsPresent) active = true;
 				}
 			});
-			setSheetData(updatedData);
+			setBandActive(active);
 		})
 	}
 
 	return (
-	<Container fluid style={{backgroundColor: "#323131"}}>
+	<Container fluid style={{backgroundColor: "#2D3339"}}>
 		<Row style={{height: "3vh", backgroundColor: "black"}}>
 			<Col style={{textAlign: "left", color: "white"}}>
 				<p>Shed Cash Drawer</p>

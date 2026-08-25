@@ -2,13 +2,51 @@ const sheets = SpreadsheetApp.openByUrl('https://docs.google.com/spreadsheets/d/
 const priceSheet = sheets.getSheetByName("Items and Prices");
 const recordSheet = sheets.getSheetByName("Records");
 const todaySheet = sheets.getSheetByName("Today's Summary");
+const bandSheet = sheets.getSheetByName("Band Upcharge");
 
-const LAST_ROW = 300; // last row tracked in Today's Summary (matches the original G2:G300 / S2:S300 / O2:O300 ranges)
+const LAST_ROW = 300; // last row tracked in Today's Summary (matches the original G2:G300 / T2:T300 / O2:O300 ranges)
+
+/**
+ * Checks the "Band Upcharge" sheet (columns: date, startTime, endTime, overnight) for
+ * an entry covering the current moment. Mirrors the client-side `isBandHere` logic in
+ * App.jsx, but simpler: Apps Script reads date/time cells as native Date objects and
+ * the overnight checkbox as a real boolean, so no text parsing is needed here.
+ *
+ * @returns {boolean} `true` if a band event is active right now.
+ */
+function isBandActive() {
+  var rows = bandSheet.getDataRange().getValues();
+  var now = new Date();
+
+  for (var i = 1; i < rows.length; i++) { // skip header row
+    var date = rows[i][0];
+    var startTime = rows[i][1];
+    var endTime = rows[i][2];
+    var overnight = rows[i][3];
+
+    if (!(date instanceof Date) || !(startTime instanceof Date) || !(endTime instanceof Date)) continue;
+    if (now.getFullYear() !== date.getFullYear() || now.getMonth() !== date.getMonth() || now.getDate() !== date.getDate()) continue;
+
+    var start = new Date(date);
+    start.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
+    var end = new Date(date);
+    end.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
+
+    var bandIsPresent = overnight
+      ? (now >= start || now <= end)
+      : (now >= start && now <= end);
+
+    if (bandIsPresent) return true;
+  }
+  return false;
+}
 
 /**
  * Web app POST handler. Receives a ticket JSON payload from the POS front end and
- * applies it to the "Today's Summary" sheet: increments matching item/modifier
- * running totals and appends any "Open Liquor" entries to the open-sales log.
+ * applies it to the "Today's Summary" sheet: increments matching item counts (split
+ * into normal-hours vs band-upcharge-hours columns based on whether the band upcharge
+ * is active right now) and dollar sales, increments matching modifier counts, and
+ * appends any "Open Liquor" entries to the open-sales log.
  *
  * Runs under a script lock so concurrent tickets can't race each other, and is
  * idempotent on `data.id` so a client retry of an already-processed ticket is a no-op.
@@ -37,16 +75,19 @@ function doPost(e) {
       cache.put(data.id, "1", 21600); // 6 hours is plenty to cover same-day retries
     }
 
+    var bandActive = isBandActive();
+
     var names = todaySheet.getRange("G2:G" + LAST_ROW).getValues();
-    var itemQty = todaySheet.getRange("I2:I" + LAST_ROW).getValues();
-    var itemSales = todaySheet.getRange("J2:J" + LAST_ROW).getValues();
+    var normalCounts = todaySheet.getRange("I2:I" + LAST_ROW).getValues();
+    var bandCounts = todaySheet.getRange("J2:J" + LAST_ROW).getValues();
+    var itemSales = todaySheet.getRange("K2:K" + LAST_ROW).getValues();
 
-    var modifierNames = todaySheet.getRange("S2:S" + LAST_ROW).getValues();
-    var modifierDepartments = todaySheet.getRange("T2:T" + LAST_ROW).getValues();
-    var modifierQty = todaySheet.getRange("U2:U" + LAST_ROW).getValues();
+    var modifierNames = todaySheet.getRange("T2:T" + LAST_ROW).getValues();
+    var modifierDepartments = todaySheet.getRange("U2:U" + LAST_ROW).getValues();
+    var modifierAmounts = todaySheet.getRange("V2:V" + LAST_ROW).getValues();
 
-    var openTimes = todaySheet.getRange("N2:N" + LAST_ROW).getValues();
-    var openAmounts = todaySheet.getRange("O2:O" + LAST_ROW).getValues();
+    var openTimes = todaySheet.getRange("O2:O" + LAST_ROW).getValues();
+    var openAmounts = todaySheet.getRange("P2:P" + LAST_ROW).getValues();
 
     var nextOpenSalesRow = openAmounts.findIndex(function (row) { return row[0] === ''; });
     if (nextOpenSalesRow === -1) nextOpenSalesRow = openAmounts.length; // log is full, handled below
@@ -61,12 +102,16 @@ function doPost(e) {
         if (row === -1) {
           unmatched.push("modifier: " + item.name + " (" + item.department + ")");
         } else {
-          modifierQty[row][0] = (modifierQty[row][0] || 0) + item.qty;
+          modifierAmounts[row][0] = (modifierAmounts[row][0] || 0) + item.qty;
         }
       } else {
         var row = names.findIndex(function (n) { return n[0] === item.name; });
         if (row !== -1) {
-          itemQty[row][0] = (itemQty[row][0] || 0) + item.qty;
+          if (bandActive) {
+            bandCounts[row][0] = (bandCounts[row][0] || 0) + item.qty;
+          } else {
+            normalCounts[row][0] = (normalCounts[row][0] || 0) + item.qty;
+          }
           itemSales[row][0] = (itemSales[row][0] || 0) + item.qty * item.price;
         } else if (item.name !== "Open Liquor") {
           unmatched.push("item: " + item.name);
@@ -86,11 +131,12 @@ function doPost(e) {
       }
     });
 
-    todaySheet.getRange("I2:I" + LAST_ROW).setValues(itemQty);
-    todaySheet.getRange("J2:J" + LAST_ROW).setValues(itemSales);
-    todaySheet.getRange("U2:U" + LAST_ROW).setValues(modifierQty);
-    todaySheet.getRange("N2:N" + LAST_ROW).setValues(openTimes);
-    todaySheet.getRange("O2:O" + LAST_ROW).setValues(openAmounts);
+    todaySheet.getRange("I2:I" + LAST_ROW).setValues(normalCounts);
+    todaySheet.getRange("J2:J" + LAST_ROW).setValues(bandCounts);
+    todaySheet.getRange("K2:K" + LAST_ROW).setValues(itemSales);
+    todaySheet.getRange("V2:V" + LAST_ROW).setValues(modifierAmounts);
+    todaySheet.getRange("O2:O" + LAST_ROW).setValues(openTimes);
+    todaySheet.getRange("P2:P" + LAST_ROW).setValues(openAmounts);
 
     if (unmatched.length > 0) {
       // These would previously fail SILENTLY - the sale's cash was taken but nothing in the
@@ -154,11 +200,12 @@ function makeRecord() {
       recordSheet.getRange("F" + nextOpenRecordsRow).setValue(totalSales);
 
       // Reset Amounts
-      todaySheet.getRange("N2:N" + LAST_ROW).clearContent(); // Open Sales
-      todaySheet.getRange("O2:O" + LAST_ROW).clearContent(); // Open Amounts
-      todaySheet.getRange("I2:I" + LAST_ROW).clearContent(); // Item Sales
-      todaySheet.getRange("J2:J" + LAST_ROW).clearContent(); // Item Amounts
-      todaySheet.getRange("U2:U" + LAST_ROW).clearContent(); // Modifier Amounts
+      todaySheet.getRange("O2:O" + LAST_ROW).clearContent(); // Open Sales Time
+      todaySheet.getRange("P2:P" + LAST_ROW).clearContent(); // Open Sales Amount
+      todaySheet.getRange("I2:I" + LAST_ROW).clearContent(); // Normal Hours Amounts
+      todaySheet.getRange("J2:J" + LAST_ROW).clearContent(); // Band Upcharge Amounts
+      todaySheet.getRange("K2:K" + LAST_ROW).clearContent(); // Item Sales
+      todaySheet.getRange("V2:V" + LAST_ROW).clearContent(); // Modifier Amounts
     }
   } finally {
     lock.releaseLock();

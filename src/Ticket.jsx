@@ -35,6 +35,35 @@ function saveQueue(queue) {
 }
 
 /**
+ * Builds a short department abbreviation for the ticket-line badge, e.g. "Beer" -> "B",
+ * "Snacks & Pop" -> "SP" (one letter per word, ignoring words with no letters like "&").
+ *
+ * @param {string} department - The department name (e.g. `item.department`).
+ * @returns {string} The abbreviation, or `''` if `department` is falsy.
+ */
+function getDepartmentAbbreviation(department) {
+    if (!department) return '';
+    return department
+        .split(/\s+/)
+        .filter(word => /[A-Za-z]/.test(word))
+        .map(word => word[0].toUpperCase())
+        .join('');
+}
+
+/**
+ * Parses a currency string like `"$8.00"` or `"-$50.00"` into a number. Prices from
+ * the sheet come through as strings, so a direct `price > 0` comparison always fails
+ * (the `$` breaks numeric coercion, e.g. `Number("$8.00")` is `NaN`) - strip the `$`
+ * before parsing so the sign and digits parse correctly either way.
+ *
+ * @param {string} price - The price string, e.g. `"$8.00"` or `"-$50.00"`.
+ * @returns {number} The numeric price (`NaN` if `price` isn't a parseable currency string).
+ */
+function parsePrice(price) {
+    return parseFloat(String(price).replace('$', ''));
+}
+
+/**
  * Sends a single ticket payload to the Google Apps Script endpoint.
  *
  * @param {Object} payload - The ticket to send (id, items, total, timestamp).
@@ -68,7 +97,7 @@ async function postTicket(payload) {
  * @returns {JSX.Element} The ticket, department selector, item grid, and payment modals.
  */
 function Ticket(props) {
-    const [radioValue, setRadioValue] = useState('Beer'); // for department selection
+    const [currentDepartment, setCurrentDepartment] = useState('Beer'); // for department selection
     const [modifierScreen, setModifierScreen] = useState(null); // for modifier selection screen
     const [currentTicketItem, setCurrentTicketItem] = useState(null); // for tracking which ticket item is being modified when modifiers are being added
     const [ticketItems, setTicketItems] = useState([]);
@@ -123,12 +152,16 @@ function Ticket(props) {
     function addItem(name, price) {
         let priceNum = parseFloat(price.slice(1));
         if (name === 'Open Liquor') {
+            // Always a new line (each Open Liquor entry can have a different price), so it always lands at the end.
+            setSelectedItemIndex(ticketItems.length);
             setTicketItems(prevItems => {
-                return [...prevItems, { name, price: priceNum, qty: 1, id: Date.now() }];
+                return [...prevItems, { name, department: currentDepartment, price: priceNum, qty: 1, id: Date.now(), mods: []}];
             });
         } else {
+            const existingIndex = ticketItems.findIndex(item => item.name === name);
+            setSelectedItemIndex(existingIndex !== -1 ? existingIndex : ticketItems.length);
             setTicketItems(prevItems => {
-                const existingItem = prevItems.find(item => item.name === name);
+                const existingItem = prevItems.find(item => item.name === name && item.mods.length === 0);
                 if (existingItem) {
                     // Increment quantity if item already exists
                     return prevItems.map(item =>
@@ -136,7 +169,7 @@ function Ticket(props) {
                     );
                 } else {
                     // Add new item with quantity 1
-                    return [...prevItems, { name, type: "item", department: radioValue, price: priceNum, qty: 1, modifiers: [] }];
+                    return [...prevItems, { name, id: `${name}-${Date.now()}`, department: currentDepartment, price: priceNum, qty: 1, mods: [] }];
                 }
             });
         }
@@ -152,39 +185,50 @@ function Ticket(props) {
      * @returns {void}
      */
     function addModifier(name, price) {
+        console.log(name, price)
         let priceNum = parseFloat(price.slice(1));
         setTicketItems(prevItems => {
-            const existingItem = prevItems.find(item => item.name === name);
+            const existingItem = prevItems[selectedItemIndex];
             if (existingItem) {
-                // Increment quantity if item already exists
-                return prevItems.map(item =>
-                    item.name === name ? { ...item, qty: item.qty + 1 } : item
+                // Add Modifier to item
+                return prevItems.map((item, index) =>
+                    index == selectedItemIndex ? { ...item, mods: [...item.mods, {"name": name, "price": price}] } : item
                 );
-            } else {
-                // Add new item with quantity 1
-                return [...prevItems, { name, type: "modifier", department: radioValue, price: priceNum, qty: 1 }];
             }
         });
         setTicketTotal(prevTotal => prevTotal + priceNum);
+        console.log(ticketItems)
     }
 
     /**
-     * Removes a ticket line entirely (regardless of quantity) and subtracts its full
-     * line total from the ticket total.
+     * Sums the price of every modifier attached to a ticket line.
+     *
+     * @param {Object} item - A ticket line item (with a `mods` array of `{ name, price }`, price as a currency string like `"$0.50"`).
+     * @returns {number} The total modifier price for the line (0 if it has no modifiers).
+     */
+    function getModsTotal(item) {
+        return item.mods.reduce((sum, mod) => sum + parseFloat(mod.price.slice(1)), 0);
+    }
+
+    /**
+     * Removes a ticket line entirely and subtracts its full line total - (item price
+     * plus any attached modifier prices) times quantity - from the ticket total.
      *
      * @param {number} index - Index into `ticketItems` of the line to remove.
      * @returns {void}
      */
     function removeItem(index) {
         const item = ticketItems[index];
-        const amount = item.price * item.qty;
+        const amount = (item.price + getModsTotal(item)) * item.qty;
         setTicketItems(prev => prev.filter((_, i) => i !== index));
         setTicketTotal(prev => prev - amount);
         setSelectedItemIndex(null);
     }
 
     /**
-     * Adjusts a ticket line's quantity by `delta` and updates the ticket total to match.
+     * Adjusts a ticket line's quantity by `delta` and updates the ticket total to match,
+     * scaling any attached modifier prices along with the item price (a modifier applies
+     * per unit, so each +/- of quantity adds/removes one unit's worth of modifiers too).
      * If the resulting quantity would be zero or less, the line is removed instead.
      *
      * @param {number} index - Index into `ticketItems` of the line to adjust.
@@ -192,9 +236,10 @@ function Ticket(props) {
      * @returns {void}
      */
     function adjustQty(index, delta) {
+        const item = ticketItems[index];
+        const newQty = item.qty + delta;
+
         setTicketItems(prev => {
-            const item = prev[index];
-            const newQty = item.qty + delta;
             if (newQty <= 0) {
                 // Remove item if quantity goes to 0 or below
                 setSelectedItemIndex(null);
@@ -204,8 +249,9 @@ function Ticket(props) {
                 return prev.map((it, i) => i === index ? { ...it, qty: newQty } : it);
             }
         });
-        const item = ticketItems[index];
-        setTicketTotal(prevTotal => prevTotal + (item.price * delta));
+
+        const unitPrice = item.price + getModsTotal(item);
+        setTicketTotal(prevTotal => prevTotal + unitPrice * delta);
     }
 
     /**
@@ -249,6 +295,7 @@ function Ticket(props) {
         setSelectedItemIndex(null);
         setShowCashPad(false);
         setPaymentEntered(false);
+        setModifierScreen(null);
         isSendingRef.current = false;
     }
 
@@ -287,7 +334,15 @@ function Ticket(props) {
         return ordered;
     }
 
-    const departmentItems = props.sheetData.filter(t => t.Department === radioValue);
+    const departmentItems = props.sheetData.filter(t => t.Department === currentDepartment);
+    if (currentDepartment === "Liquor") {
+        // Liquor items are shown lowest-price-first, with Rail always pinned to the very top.
+        departmentItems.sort((a, b) => {
+            if (a.Name === "Rail") return -1;
+            if (b.Name === "Rail") return 1;
+            return parsePrice(a.Price) - parsePrice(b.Price);
+        });
+    }
     const orderedDepartmentItems = orderItemsForColumns(departmentItems, 3);
 
     return (
@@ -306,20 +361,50 @@ function Ticket(props) {
                 {
                     ticketItems.map((item, index) => 
                         <Row key={index}>
-                            <Button variant={selectedItemIndex === index ? "primary" : "outline-primary"} onClick={() => {setSelectedItemIndex(index); item.department == "Liquor" ? setModifierScreen("liquorModifiers") : item.department == "Mixers" ? setModifierScreen("mixerModifiers") : setModifierScreen(null) }} style={{width: "100%", borderRadius: "10px", border: "none", margin: 0, color: selectedItemIndex === index ? "white" : "black"}}>
-                                <Row>
-                                <Col xs="auto" sm="auto" md="auto" lg="auto" xl="auto" style={{marginLeft: "5%", padding: 0}}>
-                                    <p style={{margin: 0, padding: 0, fontSize: 17}}>{item.name}</p>
-                                </Col>
-                                <Col>
-                                    <Card bg={selectedItemIndex === index ? "light" : "primary"} text={selectedItemIndex === index ? "dark" : "white"} style={{border: "none", width: 'fit-content', textAlign: "center"}}>
-                                        <p style={{margin: "0px 10px 0px 10px", fontSize: 16}}>{item.qty}</p>
-                                    </Card>
-                                </Col>
-                                <Col sm={3} style={{marginRight: "5%", padding: 0}}>
-                                    <p style={{margin: 0, padding: 0, width: "auto", textAlign: "right", fontSize: 17}}>${(item.price * item.qty).toFixed(2)}</p>
-                                </Col>
+                            <Button variant={selectedItemIndex === index ? "dark" : "outline-dark"}
+                                    onClick={() => {
+                                        if (selectedItemIndex === index) {
+                                            setSelectedItemIndex(null);
+                                            setModifierScreen(null);
+                                        } else {
+                                            setSelectedItemIndex(index);
+                                            item.department == "Liquor" ? setModifierScreen("liquorModifiers") : item.department == "Mixers" ? setModifierScreen("mixerModifiers") : setModifierScreen(null);
+                                        }
+                                    }}
+                                    className={`ticket-item-btn${selectedItemIndex === index ? ' selected' : ''}`} 
+                                    style={{width: "98%", borderRadius: "3px", border: "none", margin: "1% 1% 0 1%"}}>
+                                <Row className="align-items-center">
+                                    <Col xs="auto" style={{marginLeft: "2%", padding: 0}}>
+                                        <Card style={{backgroundColor: "#0073FF", borderRadius: "3px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center"}}>
+                                            <Card.Text style={{margin: "0px 10px 0px 10px", color: "white", fontWeight: "bold", fontSize: 15}}>{getDepartmentAbbreviation(item.department)}</Card.Text>
+                                        </Card>
+                                    </Col>
+                                    <Col xs="auto" sm="auto" md="auto" lg="auto" xl="auto" style={{marginLeft: "3%", padding: 0}}>
+                                        <p style={{margin: 0, padding: 0, fontSize: 16}}>{item.name}</p>
+                                    </Col>
+                                    <Col>
+                                        <p className={`ticket-item-qty`} style={{margin: 0, padding: 0, fontSize: 16, textAlign: "left"}}> x {item.qty}</p>
+                                    </Col>
+                                    <Col sm={2} style={{marginRight: "5%", padding: 0}}>
+                                        <p style={{margin: 0, padding: 0, width: "auto", textAlign: "right", fontSize: 17}}>${(item.price * item.qty).toFixed(2)}</p>
+                                    </Col>
                                 </Row>
+                                {item.mods.length > 0 ? 
+                                    item.mods.map(mod => 
+                                        <Row style={{textAlign: "left", marginLeft: "11%", marginRight: "2%"}}>
+                                            <Col style={{margin: "0px", padding: "0px"}}>
+                                                <p className={`ticket-item-mods${selectedItemIndex === index ? ' selected' : ''}`} style={{margin: "0px"}}>{mod.name}</p>
+                                            </Col>
+                                            <Col style={{margin: "0px", padding: "0px", textAlign: "right"}}>
+                                                <p className={`ticket-item-mods${selectedItemIndex === index ? ' selected' : ''}`} style={{margin: "0px"}}>+ {mod.price}</p>
+                                            </Col>
+                                        </Row>
+                                    )
+                                    
+                                :
+                                    <></>
+                                }
+                                
                             </Button>
                         </Row>
                     )
@@ -340,7 +425,7 @@ function Ticket(props) {
             <Row style={{height: "7.5vh", textAlign: "center"}} className="align-items-center">
                 {ticketTotal > 0 && (
                     <Col style={{padding: 0}}>
-                        <Button variant="outline-danger" style={{width: "95%", fontSize: 20}} onClick={() => {setTicketItems([]); setTicketTotal(0); setSelectedItemIndex(null);}}>Clear Ticket</Button>
+                        <Button variant="outline-danger" style={{width: "95%", fontSize: 20}} onClick={() => resetTicket()}>Clear Ticket</Button>
                     </Col>
                 )}
             </Row>
@@ -358,9 +443,9 @@ function Ticket(props) {
                         type="radio"
                         name="radio"
                         value={department}
-                        checked={radioValue === department}
-                        onChange={(e) => {setRadioValue(department)}}
-                        style={{fontSize: 20, padding: "1.5vh", width: "95%", borderRadius: "5px", textAlign: "center", backgroundColor: radioValue === department ? "#0073FF" : "white", border: "none", marginTop: "1.5vh", color: radioValue === department ? "white" : "black"}}
+                        checked={currentDepartment === department}
+                        onChange={(e) => {setCurrentDepartment(department)}}
+                        style={{fontSize: 20, padding: "1.5vh", width: "100%", borderRadius: "3px", textAlign: "center", backgroundColor: currentDepartment === department ? "#0073FF" : "white", border: "none", marginTop: "1.5vh", color: currentDepartment === department ? "white" : "black"}}
                         onClick={() => setModifierScreen(null)}
                     >
                         {department}
@@ -371,12 +456,12 @@ function Ticket(props) {
                 key={"Open"}
                 id={`radio-Open`}
                 type="radio"
-                variant={radioValue === "Open" ? 'primary' : 'light'}
+                variant={currentDepartment === "Open" ? 'primary' : 'light'}
                 name="radio"
                 value={"Open"}
-                checked={radioValue === "Open"}
-                onChange={(e) => {setRadioValue("Open"); setModifierScreen(null);}}
-                style={{fontSize: 20, width: "95%", padding: "1.5vh", borderRadius: "5px", textAlign: "center", backgroundColor: radioValue === "Open" ? "#0073FF" : "white", border: "none", marginTop: "1.5vh", color: radioValue === "Open" ? "white" : "black"}}
+                checked={currentDepartment === "Open"}
+                onChange={(e) => {setCurrentDepartment("Open"); setModifierScreen(null);}}
+                style={{fontSize: 20, width: "100%", padding: "1.5vh", borderRadius: "3px", textAlign: "center", backgroundColor: currentDepartment === "Open" ? "#0073FF" : "white", border: "none", marginTop: "1.5vh", color: currentDepartment === "Open" ? "white" : "black"}}
             >
                 Open
             </ToggleButton>  
@@ -385,38 +470,71 @@ function Ticket(props) {
 
         {/* This is the item selection column on the right.
             It maps all items for the selected department and allows the user to add them to the ticket by clicking on them. */}
-        <Col lg={7} style={{height: "90vh", overflow: "auto"}}>
+        <Col lg={7} style={{height: "90vh", overflow: "auto", padding: "0% 1% 0% 0%"}}>
         
-            { radioValue !== 'Open' && modifierScreen == null ?
-                <Row className="g-3" style={{marginTop: "1vh"}}>
-                    {orderedDepartmentItems.map(c => 
-                        <Col key={c.Name} xs={12} md={4} lg={4} xl={4} xxl={4} style={{padding: ".25vw", marginTop: ".25vh"}}>
-                            <button onClick={() => {addItem(c.Name, c.Price); setModifierScreen(c.Department == "Liquor" ? "liquorModifiers" : c.Department == "Mixers" ? "mixerModifiers" : null); setCurrentTicketItem(c);}} style={{width: "100%", borderRadius: "5px", textAlign: "center", backgroundColor: c.buttonColor, border: "none"}}>
-                                <Card style={{border: "none", backgroundColor: "transparent", color: "white", paddingBottom: "1.75vh", paddingTop: "2vh"}}>
-                                    <Card.Title style={{fontSize: 20}}>{c.Name}</Card.Title>
-                                </Card>
-                            </button>
+            { currentDepartment !== 'Open' && modifierScreen == null ?
+                currentDepartment === 'Liquor' ?
+                    // Liquor items are shown as a single stacked column, same layout as the modifier lists.
+                    <Row style={{height: "100%"}}>
+                        <Col xs={4} style={{padding: 0, marginTop: "1vh"}}>
+                            {departmentItems.map(c =>
+                                <Row key={c.Name} style={{margin: "1.25vh 0vh 0vh 0vh"}}>
+                                    <Button onClick={() => {
+                                        if (parsePrice(c.Price) > 0) {
+                                            addItem(c.Name, c.Price);
+                                            setModifierScreen("liquorModifiers");
+                                            setCurrentTicketItem(c);
+                                            setSelectedItemIndex(ticketItems.length);
+                                        } else {
+                                            setModifierScreen(parsePrice(c.Price) < 0 ? "dynamicItem" : "liquorModifiers");
+                                            setCurrentTicketItem(c);
+                                        }
+                                    }} style={{marginLeft: "5%", width: "95%", borderRadius: "3px", textAlign: "center", backgroundColor: c.buttonColor, border: "none", padding: "1.75vh 0 2vh 0", fontSize: 20}}>
+                                        {c.Name}
+                                    </Button>
+                                </Row>
+                            )}
                         </Col>
-                    )}
-                </Row>
+                    </Row>
+                :
+                    <Row style={{paddingTop: "1vh", width: "100%", margin:"0px"}}>
+                        {orderedDepartmentItems.map(c =>
+                            (parsePrice(c.Price) > 0 ?
+                                // Item has a price so no pin pad is used
+                                <Col key={c.Name} xs={12} md={4} lg={4} xl={4} xxl={4} style={{padding: ".25vw", marginTop: ".25vh"}}>
+                                    <button onClick={() => {addItem(c.Name, c.Price); setModifierScreen(c.Department == "Mixers" ? "mixerModifiers" : null); setCurrentTicketItem(c); setSelectedItemIndex(ticketItems.length)}} style={{width: "100%", borderRadius: "3px", textAlign: "center", backgroundColor: c.buttonColor, border: "none"}}>
+                                        <Card style={{border: "none", backgroundColor: "transparent", color: "white", paddingBottom: "1.75vh", paddingTop: "2vh"}}>
+                                            <Card.Title style={{fontSize: 20}}>{c.Name}</Card.Title>
+                                        </Card>
+                                    </button>
+                                </Col>
+                            :
+                                // Item's price is dynamic, we need a pin pad
+                                <Col key={c.Name} xs={12} md={4} lg={4} xl={4} xxl={4} style={{padding: ".25vw", marginTop: ".25vh"}}>
+                                    <button onClick={() => {setModifierScreen(c.Department == "Mixers" ? "mixerModifiers" : parsePrice(c.Price) < 0 ? "dynamicItem" : null); setCurrentTicketItem(c)}} style={{width: "100%", borderRadius: "3px", textAlign: "center", backgroundColor: c.buttonColor, border: "none"}}>
+                                        <Card style={{border: "none", backgroundColor: "transparent", color: "white", paddingBottom: "1.75vh", paddingTop: "2vh"}}>
+                                            <Card.Title style={{fontSize: 20}}>{c.Name}</Card.Title>
+                                        </Card>
+                                    </button>
+                                </Col>
+                            )
+                        )}
+                    </Row>
             : modifierScreen == null ?
-                <CashPinPad addItem={addItem} setRadioValue={setRadioValue}/>
+                <CashPinPad name={"Open Liqour"} addItem={addItem} setCurrentDepartment={setCurrentDepartment}/>
             :
                 <></>
             }
 
-            {/* TODO: Implement Row choice */}
             {/*Modifiers for Liquor and Mixers. Shows up when a liquor or mixer item is selected on the ticket and allows the user to add modifiers to those items. */}
             { modifierScreen == 'liquorModifiers' ?
                 <Row style={{height: "100%"}}>
                     <Col xs={4} style={{padding: 0, marginTop: "1vh"}}>
-                        {props.modifiers.filter(t => t.Department === "Liquor").map(c => 
-                            <Row key={c.Modifier_Name} style={{padding: ".25vw", marginTop: ".25vh"}}>
-                                <button onClick={() => addModifier(c.Modifier_Name, c.Price)} style={{width: "100%", borderRadius: "5px", textAlign: "center", backgroundColor: c.buttonColor, border: "none"}}>
-                                    <Card style={{border: "none", backgroundColor: "transparent", color: "white", paddingBottom: "1.75vh", paddingTop: "2vh"}}>
-                                        <Card.Title style={{fontSize: 20}}>{c.Modifier_Name}</Card.Title>
-                                    </Card>
-                                </button>
+                        {props.modifiers.filter(t => t.Department === "Liquor").map(c =>
+                            <Row key={c.Modifier_Name} style={{margin: "1.25vh 0vh 0vh 0vh"}}>
+                                <Button onClick={() => addModifier(c.Modifier_Name, c.Price)} style={{marginLeft: "5%", width: "95%", borderRadius: "3px", textAlign: "center", backgroundColor: c.buttonColor, border: "none", padding: "1.75vh 0 2vh 0", fontSize: 20}}>
+                                    {c.Modifier_Name}
+                                </Button>
                             </Row>
                         )}
                     </Col>
@@ -430,12 +548,10 @@ function Ticket(props) {
                 <Row style={{height: "100%"}}>
                     <Col xs={4} style={{padding: 0, marginTop: "1vh"}}>
                         {props.modifiers.filter(t => t.Department === "Mixers").map(c => 
-                            <Row key={c.Modifier_Name} style={{padding: ".25vw", marginTop: ".25vh"}}>
-                                <button onClick={() => addModifier(c.Modifier_Name, c.Price)} style={{width: "100%", borderRadius: "5px", textAlign: "center", backgroundColor: c.buttonColor, border: "none"}}>
-                                    <Card style={{border: "none", backgroundColor: "transparent", color: "white", paddingBottom: "1.75vh", paddingTop: "2vh"}}>
-                                        <Card.Title style={{fontSize: 20}}>{c.Modifier_Name}</Card.Title>
-                                    </Card>
-                                </button>
+                            <Row key={c.Modifier_Name} style={{margin: "1.25vh 0vh 0vh 0vh"}}>
+                                <Button onClick={() => addModifier(c.Modifier_Name, c.Price)} style={{marginLeft: "5%", width: "95%", borderRadius: "3px", textAlign: "center", backgroundColor: c.buttonColor, border: "none", padding: "1.75vh 0 2vh 0", fontSize: 20}}>
+                                    {c.Modifier_Name}
+                                </Button>
                             </Row>
                         )}
                     </Col>
@@ -445,6 +561,8 @@ function Ticket(props) {
                     </Col>
                 </Row>
     
+            : modifierScreen == 'dynamicItem' ?
+                <CashPinPad name={currentTicketItem.Name} addItem={addItem} setCurrentDepartment={setCurrentDepartment}/>
             :
                 <> </>
             }

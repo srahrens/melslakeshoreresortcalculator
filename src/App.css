@@ -4,3 +4,26 @@
 }
 
 ::-webkit-scrollbar {display:none;}
+
+/* Ticket item row: text color follows the selected state, and now also previews
+   that same look on hover instead of staying stuck at the unselected color. */
+.ticket-item-btn {
+    color: black;
+}
+.ticket-item-btn.selected,
+.ticket-item-btn:hover {
+    color: white;
+}
+.ticket-item-qty {
+    color: #0073FF;
+    font-style: italic;
+}
+
+.ticket-item-mods {
+    color: grey;
+    font-style: normal;
+}
+.ticket-item-mods.selected,
+.ticket-item-mods:hover .ticket-item-qty {
+    color: white;
+}
